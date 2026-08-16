@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun --version)",
+      "WebSearch",
+      "Bash(bunx create-next-app@latest . --ts --tailwind --eslint --app --src-dir --import-alias \"@/*\" --use-bun --yes)"
+    ]
+  }
+}
