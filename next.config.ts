@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   // with no Node server required.
   output: "export",
   images: { unoptimized: true },
+  devIndicators: false,
 };
 
 export default nextConfig;
