@@ -1,36 +1,115 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 足球正 EV 寻找器
 
-## Getting Started
+纯前端的足球赔率偏离分析工具。输入 1X2 赔率与两队的 Opta / Elo 评分，工具会把模型胜率
+和市场去抽水后的隐含概率放在一起比较，给出偏离方向与幅度，用来筛选正 EV 的下注机会。
 
-First, run the development server:
+Next.js 16（App Router）+ TypeScript + Tailwind 4 + Bun。`output: "export"`，构建产物是
+`out/` 下的静态站点，不需要任何服务端。
+
+## 运行
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+bun install
+bun run dev          # http://localhost:3000
+bun run build        # 静态导出到 ./out
+bun run preview      # 本地起静态服务预览 out/
+bun test             # 单元测试
+bun run typecheck    # tsc --noEmit
+bun run lint
+bun run home-advantage   # 重新抓取赛果、重算主场优势
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 输入
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| 字段 | 约束 |
+| --- | --- |
+| 主胜 / 和局 / 客胜赔率 | 欧洲小数赔率，最多两位小数，≥ 1.01 |
+| 比赛类型 | 法甲 / 法乙 / 英超 |
+| 主队 / 客队 Opta 评分 | 百分制 0 – 100，最多两位小数 |
+| 主队 / 客队 Elo 评分 | 整数，500 – 2500 |
+| +2.5 / −2.5 球赔率 | 可选，最多两位小数，两个都填才计算 |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+小数位限制由 [`react-number-format`](https://github.com/s-yadav/react-number-format) 的
+`NumericFormat` 强制执行：`decimalScale` 让第三位小数根本无法输入，`isAllowed` 拦下会超出上限的
+按键。Elo 字段用 `decimalScale={0}`，所以连小数点都打不进去。见 `src/components/DecimalField.tsx`。
 
-## Learn More
+## 输出
 
-To learn more about Next.js, take a look at the following resources:
+- **市场抽水** — 1X2 的赔率总和、超额（overround）、抽水百分比 `1 − 1/总和`，以及主/和/客
+  从原始隐含概率到按比例去抽水后公平概率的对照。
+- **Opta 模型偏离 / Elo 模型偏离** — 模型的主胜率（不含和局）对比市场的主胜率（忽略和局赔率），
+  给出偏离方向（模型偏高 = 该侧被低估）、百分点差与相对百分比，主客两侧各一行。
+- **大小球 2.5** — 去抽水后 −2.5 球（小球）与 +2.5 球（大球）的公平概率，附该联赛近三年真实大球率作对照。
+- **EV 参考** — 每 1 单位本金的期望收益。
+- **主场优势** — 所选联赛近三年的主/和/客分布与逐赛季拆分。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 模型
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+两个模型都输出 **不含和局** 的条件概率 `P(主胜 | 非平局)`，用同一个 10 为底的
+Bradley-Terry / Elo logistic：
 
-## Deploy on Vercel
+```
+P(主胜 | 非平局) = 1 / (1 + 10^(-(R_主 + HA - R_客) / S))
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Elo：`S = 400`（标准 Elo 尺度）。
+- Opta：`S = 40`。Opta 战力榜是百分制，其有效跨度大致是俱乐部 Elo 跨度的十分之一，
+  取 40 能让同样的评分差在两个模型里值差不多的概率，也让一份以 Elo 点数表示的主场优势
+  除以 10 就能换算成 Opta 点数。
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+市场那一侧按题目要求**忽略和局赔率**，只用主客两个价格做两项归一化：
+
+```
+市场 P(主胜 | 非平局) = (1/主胜赔率) / (1/主胜赔率 + 1/客胜赔率)
+```
+
+两边都是"排除和局后的胜率"，因此可以直接相减比较。
+
+EV 那一栏需要绝对概率，所以额外做了一步还原：用 1X2 去抽水后的公平和局概率
+`p_和`，把模型的条件概率放回三项之中 —— `P(主胜) = P(主胜 | 非平局) × (1 − p_和)`。
+和局概率取自市场而非模型，这是一个有假设的推导值，页面上也标注了这一点。
+
+`S = 400` / `S = 40` 是可调的尺度参数（`src/lib/ev.ts` 顶部）。它们决定评分差映射成概率的
+陡缓程度；换用自己校准过的值只需改这两个常量，`homeAdvantageOpta()` 与联赛主场优势会自动跟随。
+
+## 主场优势
+
+近三年（2023/24 – 2025/26）全部已完赛的联赛比赛，赛果取自
+[football-data.co.uk](https://www.football-data.co.uk/)（E0 / F1 / F2），本地统计：
+
+| 联赛 | 场次 | 主胜 | 和局 | 客胜 | 不含和局主胜率 | 主场优势 (Elo) | 主场优势 (Opta) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 英超 | 1140 | 43.16% | 24.47% | 32.37% | 57.14% | +50.0 | +5.00 |
+| 法甲 | 918 | 44.01% | 23.75% | 32.24% | 57.71% | +54.0 | +5.40 |
+| 法乙 | 990 | 42.12% | 27.68% | 30.20% | 58.24% | +57.8 | +5.78 |
+
+一个赛季里每支球队的主客场次相同，联赛整体的平均评分差为零，所以主胜率高出 50% 的部分
+全部归因于主场优势。把它反解成 Elo 点数：
+
+```
+HA = -400 × log10(1 / p - 1)      p = 不含和局的主胜率
+```
+
+法乙 2023/24 是 380 场（20 队），2024/25 起缩编为 18 队、306 场，因此三年合计 990 场。
+
+数字全部由 `scripts/home-advantage.mjs` 生成，`bun run home-advantage` 可重跑；
+`src/lib/ev.test.ts` 里有一组校准测试，确保存下来的 Elo 主场优势能还原出各联赛观测到的主胜率。
+
+## 结构
+
+```
+src/lib/leagues.ts     联赛常量与主场优势数据
+src/lib/ev.ts          全部概率计算（去抽水、两个模型、偏离、EV）
+src/lib/ev.test.ts     单元测试
+src/lib/format.ts      百分比 / 带符号数字格式化
+src/components/        DecimalField、LeaguePicker、Card、Results
+src/app/page.tsx       表单状态与校验
+scripts/               主场优势数据生成脚本
+```
+
+计算层是纯函数、与 UI 无关，`analyse()` 一次返回页面需要的全部数字。
+
+## 说明
+
+偏离不等于优势。模型只吃 Opta / Elo 两个评分，看不到伤停、轮换、赛程、天气和盘口流向；
+`S` 的取值也未按实际赛果做过校准。把它当成筛选可疑价格的第一道筛子，不是下注依据。
