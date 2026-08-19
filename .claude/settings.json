@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun *)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Read",
+      "Edit",
+      "Write"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git diff --quiet && git diff --cached --quiet || (bun run typecheck && bun run lint)"
+          }
+        ]
+      }
+    ]
+  }
+}
